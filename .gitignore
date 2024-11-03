@@ -1,0 +1,11 @@
+.venv/
+libs/
+old/
+ChessEngine-main/
+__pycache__/
+*.pgn
+*.pth
+data/prepared_data/
+data/raw_data/
+data/saved_models/
+stockfish/
