@@ -10,7 +10,7 @@ STOCKFISH_PATH = "./stockfish/stockfish-macos-m1-apple-silicon"
 engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
 
 # Set the path to your PGN file
-PGN_PATH = "data/raw_data/ficsgamesdb_202401_chess_nomovetimes_401277.pgn"  # Path to PGN file with chess games
+PGN_PATH = "data/raw_data/ficsgamesdb_202401_standard2000_nomovetimes_401554.pgn"  # Path to PGN file with chess games
 
 # Ensure output directory exists
 output_directory = "data/prepared_data"
