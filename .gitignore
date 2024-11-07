@@ -13,3 +13,5 @@ stockfish/
 .aider.chat.history.md
 .aider.input.history
 .aider.tags.cache.v3/
+.aider*
+.env

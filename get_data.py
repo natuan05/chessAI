@@ -1,6 +1,5 @@
 import os
 import re
-
 import chess
 import chess.engine
 import chess.pgn
@@ -9,111 +8,115 @@ import chess.pgn
 STOCKFISH_PATH = "./stockfish/stockfish-macos-m1-apple-silicon"
 engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
 
-# Set the path to your PGN file
-PGN_PATH = "data/raw_data/ficsgamesdb_202401_standard2000_nomovetimes_401554.pgn"  # Path to PGN file with chess games
+# Path to PGN file (update this to the correct PGN file location)
+PGN_PATH = "data/raw_data/ficsgamesdb_202401_standard2000_nomovetimes_401554.pgn"
 
-# Ensure output directory exists
-output_directory = "data/prepared_data"
-os.makedirs(output_directory, exist_ok=True)
+# Output directory for prepared data
+OUTPUT_DIRECTORY = "data/prepared_data"
+os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
 
 
 def _get_stockfish_evaluation(board):
     """
-    Given a chess.Board object, returns the Stockfish evaluation score.
+    Given a chess.Board object, returns the Stockfish evaluation score in centipawns.
+    A return value of None indicates an invalid position (e.g., checkmate).
     """
-    info = engine.analyse(board, chess.engine.Limit(time=0.1))
-    score = info["score"].relative.score(mate_score=100_000) / 100.0  # Convert to centipawns
-    if score > 100 or score < -100:
+    info = engine.analyse(board, chess.engine.Limit(time=0.1))  # Time limit for Stockfish analysis
+    score = info["score"].relative.score(mate_score=100_000) / 100.0  # Convert score to centipawns
+
+    # Return None if the evaluation is too extreme (checkmate or stalemate)
+    if abs(score) > 100:
         return None
     return score
 
 
 def _get_file_count(pgn_file: str, output_dir: str) -> int:
-    # Define regex pattern to match filenames like "pgn_file_1_1000.txt"
+    """
+    Returns the next available file count for a given PGN file name.
+    Ensures filenames follow the pattern: pgn_file_1_1000.txt, pgn_file_2_1000.txt, etc.
+    """
     pattern = re.compile(rf"^{re.escape(pgn_file)}_(\d+)_\d+\.txt$")
-
-    # Initialize the max file count found
     max_count = 0
 
-    # List all files in the output directory
     for filename in os.listdir(output_dir):
-        # Check if the filename matches the pattern
         match = pattern.match(filename)
         if match:
-            # Extract the file count number and update max_count
             file_count = int(match.group(1))
             max_count = max(max_count, file_count)
 
-    # Return the next file count
     return max_count + 1
 
 
 def _get_filename_without_extension(file_path: str) -> str:
-    # Extract the filename with extension
-    filename_with_extension = os.path.basename(file_path)
-    # Remove the file extension
-    filename_without_extension = os.path.splitext(filename_with_extension)[0]
-    return filename_without_extension
+    """Extracts the filename without the extension."""
+    return os.path.splitext(os.path.basename(file_path))[0]
 
 
 def parse_and_evaluate_positions(pgn_file, output_dir, max_positions_per_file=1000):
     """
-    Parses a PGN file, extracts FEN positions, evaluates them with Stockfish,
-    and saves the FEN and evaluation to files in data/raw_data/pos_eval_{num}.txt.
+    Parses a PGN file, extracts FEN positions, evaluates them using Stockfish,
+    and saves them to text files in the specified output directory.
     """
     file_name = _get_filename_without_extension(pgn_file)
     file_count = _get_file_count(file_name, output_dir)
+
     positions = []
     evaluations = []
     position_count = 0
 
-    with open(pgn_file, 'r') as pgn:
-        game = chess.pgn.read_game(pgn)
-
-        while game:
-            board = game.board()
-            # Iterate over moves and extract positions
-            for move in game.mainline_moves():
-                board.push(move)
-                fen = board.fen()
-                eval_score = _get_stockfish_evaluation(board)
-
-                # Skip if checkmate
-                if not eval_score:
-                    continue
-
-                positions.append(fen)
-                evaluations.append(eval_score)
-                position_count += 1
-
-                # When max positions reached, save to new file
-                if position_count >= max_positions_per_file:
-                    file_name = _get_filename_without_extension(pgn_file)
-                    output_file = os.path.join(output_dir, f"{file_name}_{file_count}_{max_positions_per_file}.txt")
-                    with open(output_file, "w") as f:
-                        for fen, eval_score in zip(positions, evaluations):
-                            f.write(f"{fen},{eval_score}\n")
-                    print(f"Saved {position_count} positions to {output_file}")
-                    # Reset for the next file
-                    positions = []
-                    evaluations = []
-                    position_count = 0
-                    file_count += 1
-
+    try:
+        with open(pgn_file, 'r') as pgn:
             game = chess.pgn.read_game(pgn)
 
-    # Save any remaining positions in the last file
-    if positions:
-        output_file = os.path.join(output_dir, f"pos_eval_{file_count}.txt")
-        with open(output_file, "w") as f:
-            for fen, eval_score in zip(positions, evaluations):
-                f.write(f"{fen},{eval_score}\n")
-        print(f"Saved {position_count} positions to {output_file}")
+            while game:
+                board = game.board()
+
+                # Iterate over each move in the game
+                for move in game.mainline_moves():
+                    board.push(move)
+                    fen = board.fen()
+                    eval_score = _get_stockfish_evaluation(board)
+
+                    if eval_score is None:
+                        continue  # Skip positions with invalid evaluation (e.g., checkmate)
+
+                    positions.append(fen)
+                    evaluations.append(eval_score)
+                    position_count += 1
+
+                    # Save positions to a new file if the max is reached
+                    if position_count >= max_positions_per_file:
+                        output_file = os.path.join(output_dir, f"{file_name}_{file_count}_{max_positions_per_file}.txt")
+                        with open(output_file, "w") as f:
+                            for fen, eval_score in zip(positions, evaluations):
+                                f.write(f"{fen},{eval_score}\n")
+                        print(f"Saved {position_count} positions to {output_file}")
+
+                        # Reset for the next file
+                        positions.clear()
+                        evaluations.clear()
+                        position_count = 0
+                        file_count += 1
+
+                # Read the next game from the PGN file
+                game = chess.pgn.read_game(pgn)
+
+        # Save any remaining positions in the last file
+        if positions:
+            output_file = os.path.join(output_dir, f"pos_eval_{file_count}.txt")
+            with open(output_file, "w") as f:
+                for fen, eval_score in zip(positions, evaluations):
+                    f.write(f"{fen},{eval_score}\n")
+            print(f"Saved {position_count} positions to {output_file}")
+    except FileNotFoundError:
+        print(f"Error: The PGN file {pgn_file} was not found.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 
 if __name__ == '__main__':
-    # Example usage
-    parse_and_evaluate_positions(PGN_PATH, output_directory, max_positions_per_file=100)
+    # Parse PGN file and evaluate positions
+    parse_and_evaluate_positions(PGN_PATH, OUTPUT_DIRECTORY, max_positions_per_file=100)
 
     # Close Stockfish engine after processing
     engine.close()
