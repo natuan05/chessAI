@@ -56,9 +56,12 @@ def parse_and_evaluate_positions(pgn_file, output_dir, max_positions_per_file=10
     """
     Parses a PGN file, extracts FEN positions, evaluates them using Stockfish,
     and saves them to text files in the specified output directory.
+    Skips over positions already saved based on `_get_file_count`.
     """
     file_name = _get_filename_without_extension(pgn_file)
     file_count = _get_file_count(file_name, output_dir)
+    skipped_positions = file_count * max_positions_per_file  # Calculate how many positions to skip
+    current_position = 0  # Track the current position number while reading the PGN
 
     positions = []
     evaluations = []
@@ -71,6 +74,12 @@ def parse_and_evaluate_positions(pgn_file, output_dir, max_positions_per_file=10
             while game:
                 board = game.board()
 
+                current_position += 1
+
+                # Skip positions until reaching the starting point
+                if current_position <= skipped_positions:
+                    continue
+
                 # Iterate over each move in the game
                 for move in game.mainline_moves():
                     board.push(move)
@@ -79,6 +88,7 @@ def parse_and_evaluate_positions(pgn_file, output_dir, max_positions_per_file=10
 
                     if eval_score is None:
                         continue  # Skip positions with invalid evaluation (e.g., checkmate)
+
 
                     positions.append(fen)
                     evaluations.append(eval_score)
@@ -103,7 +113,7 @@ def parse_and_evaluate_positions(pgn_file, output_dir, max_positions_per_file=10
 
         # Save any remaining positions in the last file
         if positions:
-            output_file = os.path.join(output_dir, f"pos_eval_{file_count}.txt")
+            output_file = os.path.join(output_dir, f"{file_name}_{file_count}_{max_positions_per_file}.txt")
             with open(output_file, "w") as f:
                 for fen, eval_score in zip(positions, evaluations):
                     f.write(f"{fen},{eval_score}\n")

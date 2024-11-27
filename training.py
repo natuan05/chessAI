@@ -1,196 +1,16 @@
 import os
 import threading
-
-import chess
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 from glob import glob
-
-# Training parameters
-NUM_EPOCHS = 500  # Number of training epochs
-BATCH_SIZE = 256  # Batch size
-LEARNING_RATE = 0.001  # Learning rate for optimizer
-MODEL_SAVE_PATH = "data/saved_models/model_with_loss_.pth"  # Model save path
-MODEL_PATH = "data/saved_models"
-MAX_FILES = 1000  # Max number of files to load for training
-MODEL_EXTENSION = "pth"
-
-# To stop the loop
-stop_training = False
-
-# Ensure the model save directory exists
-os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from utils import get_loss_from_model_name, get_filename_without_extension, board_to_tensor, fen_to_tensor
 
 
-# Define custom Dataset class
-class ChessDataset(Dataset):
-    def __init__(self, data_files):
-        self.positions = []
-        self.evaluations = []
-
-        for file in data_files:
-            with open(file, "r") as f:
-                for line in f:
-                    fen, eval_score = line.strip().split(',')
-                    self.positions.append(self.fen_to_tensor(fen))
-                    self.evaluations.append(float(eval_score))
-
-        self.evaluations = torch.tensor(self.evaluations, dtype=torch.float32)
-
-    def __len__(self):
-        return len(self.evaluations)
-
-    def __getitem__(self, idx):
-        return self.positions[idx], self.evaluations[idx]
-
-    @staticmethod
-    def fen_to_tensor(fen):
-        """Converts FEN to a tensor representation."""
-        board = chess.Board(fen)
-        board_tensor = np.zeros((13, 8, 8), dtype=np.float32)
-
-        piece_map = {'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5,
-                     'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11}
-
-        for square in chess.SQUARES:
-            piece = board.piece_at(square)
-            row, col = divmod(square, 8)
-            if piece:
-                board_tensor[piece_map[piece.symbol()], row, col] = 1
-            else:
-                board_tensor[12, row, col] = 1  # Empty squares
-
-        if board.turn == chess.BLACK:
-            board_tensor = np.flip(board_tensor, axis=(1, 2)).copy()
-
-        return torch.tensor(board_tensor)
-
-
-# CNN Model Definition
-class ChessCNN(nn.Module):
-    def __init__(self):
-        super(ChessCNN, self).__init__()
-        self.conv1 = nn.Conv2d(13, 32, kernel_size=3, padding=1)  # Input channels = 13, output = 32
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # Further channels
-        self.fc1 = nn.Linear(64 * 8 * 8, 128)  # Flatten then fully connected
-        self.fc2 = nn.Linear(128, 1)  # Single output for evaluation
-
-    def forward(self, x):
-        x = torch.relu(self.conv1(x))  # First convolution with ReLU activation
-        x = torch.relu(self.conv2(x))  # Second convolution
-        x = x.view(x.size(0), -1)  # Flatten for fully connected layer
-        x = torch.relu(self.fc1(x))  # First FC layer
-        x = self.fc2(x)  # Final output layer
-        return x
-
-
-def load_data(test_size=0.2):
-    """Loads and splits data from text files into training and test sets."""
-    data_files = glob("data/prepared_data/*.txt")[:MAX_FILES]
-    print(f"Loading data from {len(data_files)} files")
-
-    train_files, test_files = train_test_split(data_files, test_size=test_size, random_state=42)
-
-    train_dataset = ChessDataset(train_files)
-    test_dataset = ChessDataset(test_files)
-
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
-    return train_loader, test_loader
-
-
-def check_input():
-    global stop_training
-    while not stop_training:
-        user_input = input()
-        if user_input == "stop":
-            stop_training = True
-
-
-def train():
-    # Load data
-    train_loader, test_loader = load_data()
-
-    # Initialize model, loss function, and optimizer
-    train_model = ChessCNN()
-    criterion = nn.MSELoss()  # Mean Squared Error for regression
-    optimizer = optim.Adam(train_model.parameters(), lr=LEARNING_RATE)
-
-    # Start the input-checking thread
-    input_thread = threading.Thread(target=check_input)
-    input_thread.start()
-
-    # Training loop
-    for epoch in range(NUM_EPOCHS):
-
-        if stop_training:
-            print("Training loop stopped by input \"stop\".")
-            break
-
-        train_model.train()  # Set model to training mode
-        total_loss = 0
-        for inputs, targets in train_loader:
-            optimizer.zero_grad()  # Clear gradients
-            outputs = train_model(inputs)  # Forward pass
-            loss = criterion(outputs, targets.unsqueeze(1))  # Calculate loss
-            loss.backward()  # Backward pass
-            optimizer.step()  # Update weights
-
-            total_loss += loss.item()  # Accumulate loss for reporting
-
-        avg_loss = total_loss / len(train_loader)
-        print(f"Epoch [{epoch + 1}/{NUM_EPOCHS}], Loss: {avg_loss:.4f}")
-
-    # Save the trained model
-    torch.save(train_model.state_dict(), MODEL_SAVE_PATH.split(".")[0] +
-               f"{evaluate(test_loader, train_model, criterion)}." + MODEL_EXTENSION)
-    print(f"Model saved to {MODEL_SAVE_PATH}")
-
-
-def _board_to_tensor(board):
-    """
-    Converts a chess.Board object to a tensor representation.
-    """
-    board_tensor = np.zeros((13, 8, 8), dtype=np.float32)
-
-    # Define piece mappings to tensor indices
-    piece_map = {
-        'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5,
-        'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11
-    }
-
-    # Place pieces on the tensor
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        row, col = divmod(square, 8)
-        if piece:
-            board_tensor[piece_map[piece.symbol()], row, col] = 1
-        else:
-            board_tensor[12, row, col] = 1  # Empty squares
-
-    # Flip the board if it is Black's turn to move
-    if board.turn == chess.BLACK:
-        board_tensor = np.flip(board_tensor, axis=(1, 2)).copy()
-
-    return torch.tensor(board_tensor)
-
-
-def model_eval(model, board):
-    """
-    Evaluates the board position using the model.
-    """
-    model.eval()
-    with torch.no_grad():
-        position_tensor = _board_to_tensor(board).unsqueeze(0)
-        return model(position_tensor)
-
-
-def evaluate(test_loader, model, criterion) -> float:
+def get_loss(model, test_loader, criterion) -> float:
     """Evaluate the model on the test dataset and print the average test loss."""
     model.eval()  # Set model to evaluation mode
     total_test_loss = 0
@@ -205,58 +25,159 @@ def evaluate(test_loader, model, criterion) -> float:
     return avg_test_loss
 
 
-def _test_model(model, fen):
-    """Tests the trained model on a single FEN position."""
-    model.eval()  # Set model to evaluation mode
-    with torch.no_grad():  # Disable gradient calculation
-        position_tensor = ChessDataset.fen_to_tensor(fen).unsqueeze(0)  # Add batch dimension
-        prediction = model(position_tensor)
-        print(f"Predicted evaluation for position {fen}: {prediction.item()} centipawns")
+class Trainer:
+    def __init__(self, num_epochs: int, learning_rate: float, model_save_path: str = None, batch_size: int = 64,
+                 max_files: int = 1000, model_extension: str = "pth"):
+        self.num_epochs = num_epochs
+        self.batch_size = batch_size
+        self.lr = learning_rate
+        self.model_save_path = model_save_path
+        self.model_path = os.path.dirname(self.model_save_path)
+        self.max_files = max_files
+        self.model_extension = model_extension
+
+        self.stop_training = False  # To stop the loop
+
+        # Ensure the model save directory exists
+        os.makedirs(os.path.dirname(self.model_save_path), exist_ok=True)
+
+        self.train()
+
+    def load_data(self, test_size=0.2):
+        """Loads and splits data from text files into training and test sets."""
+        data_files = glob("data/prepared_data/*.txt")[:self.max_files]
+        print(f"Loading data from {len(data_files)} files")
+
+        train_files, test_files = train_test_split(data_files, test_size=test_size, random_state=42)
+
+        train_dataset = ChessDataset(train_files)
+        test_dataset = ChessDataset(test_files)
+
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False)
+
+        return train_loader, test_loader
+
+    def check_input(self):
+        while not self.stop_training:
+            user_input = input()
+            if user_input == "stop":
+                self.stop_training = True
+
+    def train(self):
+        # Load data
+        train_loader, test_loader = self.load_data()
+
+        # Initialize model, loss function, and optimizer
+        train_model = ChessCNN()
+        criterion = nn.MSELoss()  # Mean Squared Error for regression
+        optimizer = optim.AdamW(train_model.parameters(), lr=self.lr)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+
+        # Start the input-checking thread
+        input_thread = threading.Thread(target=self.check_input)
+        input_thread.start()
+
+        try:
+            # Training loop
+            for epoch in range(self.num_epochs):
+                if self.stop_training:
+                    print("Training loop stopped by input \"stop\".")
+                    break
+
+                train_model.train()  # Set model to training mode
+                total_loss = 0
+                for inputs, targets in train_loader:
+                    optimizer.zero_grad()  # Clear gradients
+                    outputs = train_model(inputs)  # Forward pass
+                    loss = criterion(outputs, targets.unsqueeze(1))  # Calculate loss
+                    loss.backward()  # Backward pass
+                    optimizer.step()  # Update weights
+
+                    total_loss += loss.item()  # Accumulate loss for reporting
+
+                avg_loss = total_loss / len(train_loader)
+                print(f"Epoch [{epoch + 1}/{self.num_epochs}], Loss: {avg_loss:.4f}")
+                scheduler.step(avg_loss)
+
+            # Save the trained model
+            path = self.model_save_path.split(".")[0] + f"{get_loss(train_model, test_loader, criterion)}." + self.model_extension
+            torch.save(train_model.state_dict(), path)
+            print(f"Model saved to {path}")
+        finally:
+            # Ensure the input-checking thread is stopped
+            self.stop_training = True
+            input_thread.join()  # Wait for the thread to finish
+            print("Training finished and resources cleaned up.")
 
 
-def get_best_model():
-    """Find the model with the lowest recorded loss and return its file path."""
-    best_loss = float('inf')
-    best_model_path = None
-
-    files = glob(os.path.join(MODEL_PATH, "*"))
-    if not files:
-        raise FileNotFoundError(
-            f"No model files found in {MODEL_PATH}. Ensure models are saved in this directory.")
-
-    for f in files:
-        file_name = _get_filename_without_extension(f)
-        cur_loss = _get_loss_from_model_name(file_name)
-
-        if cur_loss < best_loss:
-            best_loss = cur_loss
-            best_model_path = f
-
-    if best_model_path is None:
-        raise ValueError("No valid model files with loss information found in filenames.")
-
-    return best_model_path
+def model_eval(model, board):
+    """
+    Evaluates the board position using the model.
+    """
+    model.eval()
+    with torch.no_grad():
+        position_tensor = board_to_tensor(board).unsqueeze(0)
+        return model(position_tensor)
 
 
-def _get_filename_without_extension(file_path):
-    """Helper function to get filename without extension."""
-    return os.path.splitext(os.path.basename(file_path))[0]
+class ChessDataset(Dataset):
+    def __init__(self, data_files):
+        self.positions = []
+        self.evaluations = []
+
+        for file in data_files:
+            with open(file, "r") as f:
+                for line in f:
+                    fen, eval_score = line.strip().split(',')
+                    self.positions.append(fen_to_tensor(fen))
+                    self.evaluations.append(float(eval_score))
+
+        self.evaluations = torch.tensor(self.evaluations, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.evaluations)
+
+    def __getitem__(self, idx):
+        return self.positions[idx], self.evaluations[idx]
 
 
-def _get_loss_from_model_name(file_name):
-    """Extract loss value from the model filename."""
-    try:
-        loss_str = file_name.split('_')[-1]
-        return float(loss_str)
-    except ValueError:
-        raise ValueError(f"Filename '{file_name}' does not contain a valid loss value.")
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x):
+        residual = self.shortcut(x)
+        x = torch.relu(self.bn1(self.conv1(x)))
+        x = self.bn2(self.conv2(x))
+        x += residual  # Residual connection
+        return torch.relu(x)
+
+
+class ChessCNN(nn.Module):
+    def __init__(self):
+        super(ChessCNN, self).__init__()
+        self.layer1 = ResidualBlock(13, 32)
+        self.layer2 = ResidualBlock(32, 64)
+        self.layer3 = ResidualBlock(64, 128)
+        self.dropout = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(128 * 8 * 8, 256)
+        self.fc2 = nn.Linear(256, 1)
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = x.view(x.size(0), -1)
+        x = self.dropout(torch.relu(self.fc1(x)))
+        x = self.fc2(x)
+        return x
 
 
 if __name__ == "__main__":
-    train()
-
-    # Example FEN position for testing
-    test_fen = "rnb1kbnr/ppp1pppp/8/8/2q5/8/PPPP1PPP/RNBQK1NR b KQkq - 0 1"  # Some position
-    model = ChessCNN()
-    model.load_state_dict(torch.load(get_best_model(), weights_only=True))  # Load the saved model with weights only
-    _test_model(model, test_fen)  # Test the model on the example FEN
+    trainer = Trainer(num_epochs=100, learning_rate=0.001, model_save_path="data/saved_models/chess_model.pth")

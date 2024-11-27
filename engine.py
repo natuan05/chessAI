@@ -1,15 +1,15 @@
 import torch
 import chess as ch
-from training import ChessCNN, get_best_model, model_eval
+from training import ChessCNN, model_eval
 
 
 class Engine:
-    def __init__(self, board, max_depth, color):
+    def __init__(self, model, board, max_depth, color):
         self.board = board
         self.color = color
         self.max_depth = max_depth
         self.model = ChessCNN()
-        self.model.load_state_dict(torch.load(get_best_model(), weights_only=True))
+        self.model.load_state_dict(torch.load(model, weights_only=True))
 
     def get_best_move(self):
         return self._engine(None, 1)

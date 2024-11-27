@@ -1,3 +1,4 @@
+import os
 import engine as ce
 import chess as ch
 
@@ -28,8 +29,8 @@ class Main:
             except ValueError:
                 print("Invalid move. Please try again.")
 
-    def playEngineMove(self, max_time, color):
-        engine = ce.Engine(self.board, max_time, color)
+    def playEngineMove(self, model, max_time, color):
+        engine = ce.Engine(model, self.board, max_time, color)
         best_move = engine.get_best_move()
         self.board.push(best_move)
 
@@ -39,6 +40,17 @@ class Main:
         color = None
         while color not in ["b", "w"]:
             color = input('Play as (type "b" or "w"): ').lower()
+
+        # Get the model
+        model = ""
+        try:
+            while not os.path.exists(model):
+                model = input('Type in the model path: ').lower()
+                if not os.path.exists(model):
+                    print(f"Model '{model}' not found. Please try again.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            return
 
         # Get thinking time
         while True:
@@ -55,7 +67,7 @@ class Main:
         if color == "b":
             while not self.board.is_checkmate():
                 print("The engine is thinking...")
-                self.playEngineMove(max_time, ch.WHITE)
+                self.playEngineMove(model, max_time, ch.WHITE)
                 print(self.board)
                 self.playHumanMove()
                 print(self.board)
@@ -65,7 +77,7 @@ class Main:
                 self.playHumanMove()
                 print(self.board)
                 print("The engine is thinking...")
-                self.playEngineMove(max_time, ch.BLACK)
+                self.playEngineMove(model, max_time, ch.BLACK)
 
         self.printGameOutcome()
         # Reset the board and start a new game for next move
