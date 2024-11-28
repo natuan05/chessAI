@@ -1,53 +1,184 @@
 import os
+
+import pygame
+import chess
 import engine as ce
-import chess as ch
+from pygame.locals import *
+
+# Constants
+WIDTH, HEIGHT = 480, 480
+SQ_SIZE = WIDTH // 8
+FPS = 60
+WHITE = (237, 199, 126)
+BLACK = (180, 104, 23)
+
+# Initialize Pygame
+pygame.init()
+# Map chess symbols to custom image filenames
+PIECE_IMAGE_MAP = {
+    'P': 'pl',  # White Pawn (Light)
+    'N': 'nl',  # White Knight (Light)
+    'B': 'bl',  # White Bishop (Light)
+    'R': 'rl',  # White Rook (Light)
+    'Q': 'ql',  # White Queen (Light)
+    'K': 'kl',  # White King (Light)
+    'p': 'pd',  # Black Pawn (Dark)
+    'n': 'nd',  # Black Knight (Dark)
+    'b': 'bd',  # Black Bishop (Dark)
+    'r': 'rd',  # Black Rook (Dark)
+    'q': 'qd',  # Black Queen (Dark)
+    'k': 'kd',  # Black King (Dark)
+}
+
+# Load piece images with custom filenames
+PIECE_IMAGES = {}
+for piece, image_name in PIECE_IMAGE_MAP.items():
+    try:
+        image_path = f'images/{image_name}.png'
+        PIECE_IMAGES[piece] = pygame.image.load(image_path)
+        PIECE_IMAGES[piece] = pygame.transform.scale(PIECE_IMAGES[piece], (SQ_SIZE, SQ_SIZE))
+    except FileNotFoundError:
+        print(f"Error: Image for piece '{piece}' not found at {image_path}.")
+        exit()
+
+# Screen
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Chess GUI")
+
+# Timer
+font = pygame.font.Font(None, 36)
 
 
-class Main:
-    def __init__(self, board=ch.Board()):
-        self.board = board
+def display_game_over():
+    result_text = "Game Over"
+    game_over_text = font.render(result_text, True, WHITE)
+    screen.fill(BLACK)
+    screen.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2))
+    pygame.display.flip()
+    pygame.time.wait(5000)  # Wait for 5 seconds before closing
 
-    def playHumanMove(self):
-        while True:
-            try:
-                print(self.board.legal_moves)
-                print('To undo your last move, type "undo".')
-                move = input("Your move: ")
 
-                if move == "undo":
-                    if len(self.board.move_stack) > 1:
-                        self.board.pop()
-                        self.board.pop()
-                        print("Last move undone.")
-                    else:
-                        print("No moves to undo.")
-                    continue
+class ChessGame:
+    def __init__(self):
+        self.board = chess.Board()
+        self.selected_square = None
+        self.dragging_piece = None
+        self.start_pos = None
+        self.timer_white = 600  # 10 minutes
+        self.timer_black = 600
+        self.last_update = pygame.time.get_ticks()
+        self.current_turn = chess.WHITE
+        self.player_color = None
+        self.model = ""
+        self.max_time = None
 
-                # Apply the move if it's legal
-                self.board.push_san(move)
-                break
-            except ValueError:
-                print("Invalid move. Please try again.")
+    def draw_board(self):
+        colors = [WHITE, BLACK]
+        for row in range(8):
+            for col in range(8):
+                # Flip rows and columns for black's perspective
+                draw_row = 7 - row if self.current_turn == chess.BLACK else row
+                draw_col = 7 - col if self.current_turn == chess.BLACK else col
+                color = colors[(row + col) % 2]
+                pygame.draw.rect(screen, color, pygame.Rect(draw_col * SQ_SIZE, draw_row * SQ_SIZE, SQ_SIZE, SQ_SIZE))
+
+    def draw_pieces(self):
+        for row in range(8):
+            for col in range(8):
+                # Flip rows and columns for black's perspective
+                board_row = 7 - row if self.current_turn == chess.BLACK else row
+                board_col = 7 - col if self.current_turn == chess.BLACK else col
+                piece = chess_game.board.piece_at(chess.square(col, 7 - row))
+                if piece:
+                    piece_symbol = piece.symbol()
+                    if chess_game.selected_square == chess.square(col, 7 - row) and chess_game.dragging_piece:
+                        # Skip drawing the piece being dragged
+                        continue
+                    draw_x = board_col * SQ_SIZE
+                    draw_y = board_row * SQ_SIZE
+                    screen.blit(PIECE_IMAGES[piece_symbol], (draw_x, draw_y))
+
+    def draw_dragging_piece(self):
+        if self.dragging_piece:
+            pos = pygame.mouse.get_pos()
+            screen.blit(self.dragging_piece, (pos[0] - SQ_SIZE // 2, pos[1] - SQ_SIZE // 2))
+
+    def handle_events(self):
+        # Player
+        if chess_game.current_turn == self.player_color:
+            for event in pygame.event.get():
+                if event.type == QUIT:
+                    pygame.quit()
+                    exit()
+                elif event.type == MOUSEBUTTONDOWN:
+                    self.handle_mouse_down(event)
+                elif event.type == MOUSEBUTTONUP:
+                    self.handle_mouse_up(event)
+
+        # Engine
+        else:
+            self.playEngineMove(self.model, self.max_time, chess.WHITE)
+            self.current_turn = not self.current_turn  # Switch turns
 
     def playEngineMove(self, model, max_time, color):
         engine = ce.Engine(model, self.board, max_time, color)
         best_move = engine.get_best_move()
         self.board.push(best_move)
 
-    def startGame(self):
+    def handle_mouse_down(self, event):
+        row, col = event.pos[1] // SQ_SIZE, event.pos[0] // SQ_SIZE
+        # Mirror the square for black's perspective
+        if self.player_color == chess.BLACK:
+            row, col = 7 - row, 7 - col
+        square = chess.square(col, 7 - row)
+        piece = self.board.piece_at(square)
+        if piece and piece.color == self.current_turn:
+            self.selected_square = square
+            self.start_pos = (row, col)
+            self.dragging_piece = PIECE_IMAGES[piece.symbol()]
+
+    def handle_mouse_up(self, event):
+        if not self.dragging_piece:
+            return
+        end_row, end_col = event.pos[1] // SQ_SIZE, event.pos[0] // SQ_SIZE
+        # Mirror the square for black's perspective
+        if self.player_color == chess.BLACK:
+            end_row, end_col = 7 - end_row, 7 - end_col
+        end_square = chess.square(end_col, 7 - end_row)
+        move = chess.Move(self.selected_square, end_square)
+        if move in self.board.legal_moves:
+            self.board.push(move)
+            self.current_turn = not self.current_turn  # Switch turns
+        self.selected_square = None
+        self.dragging_piece = None
+
+    def update_timers(self):
+        now = pygame.time.get_ticks()
+        elapsed_time = (now - self.last_update) // 1000
+        if self.current_turn == chess.WHITE:
+            self.timer_white -= elapsed_time
+        else:
+            self.timer_black -= elapsed_time
+        self.last_update = now
+
+    def init(self):
+
         """Starts a new game and handles player inputs and engine moves."""
         # Get human player's color
-        color = None
+        color = ""
         while color not in ["b", "w"]:
-            color = input('Play as (type "b" or "w"): ').lower()
+            color = input('Play as (type "b" or "w"): ')
+            if color.lower() == "b":
+                self.player_color = chess.BLACK
+            else:
+                self.player_color = chess.WHITE
 
         # Get the model
-        model = ""
         try:
-            while not os.path.exists(model):
-                model = input('Type in the model path: ').lower()
-                if not os.path.exists(model):
-                    print(f"Model '{model}' not found. Please try again.")
+            while not os.path.exists(self.model):
+                self.model = input('Type in the model path: ').lower()
+                if not os.path.exists(self.model):
+                    print(f"Model '{self.model}' not found. Please try again.")
         except Exception as e:
             print(f"An error occurred: {e}")
             return
@@ -55,41 +186,25 @@ class Main:
         # Get thinking time
         while True:
             try:
-                max_time = int(input("Choose thinking time (in seconds): "))
+                self.max_time = int(input("Choose thinking time (in seconds): "))
                 break
             except ValueError:
                 print("Invalid input. Please enter an integer.")
 
-        # Game loop
-        #if self.board.is_checkmate():
-        #    if self.
-        #    print()
-        if color == "b":
-            while not self.board.is_checkmate():
-                print("The engine is thinking...")
-                self.playEngineMove(model, max_time, ch.WHITE)
-                print(self.board)
-                self.playHumanMove()
-                print(self.board)
-        elif color == "w":
-            while not self.board.is_checkmate():
-                print(self.board)
-                self.playHumanMove()
-                print(self.board)
-                print("The engine is thinking...")
-                self.playEngineMove(model, max_time, ch.BLACK)
-
-        self.printGameOutcome()
-        # Reset the board and start a new game for next move
-        self.board.reset()
-        self.startGame()
-
-    def printGameOutcome(self):
-        print(self.board)
-        print(f"Game Over: {self.board.outcome()}")
+    def run(self):
+        self.init()
+        clock = pygame.time.Clock()
+        while not self.board.is_checkmate():
+            self.handle_events()
+            self.draw_board()
+            self.draw_pieces()
+            self.draw_dragging_piece()
+            pygame.display.flip()
+            clock.tick(FPS)
+        display_game_over()
 
 
+# Main Entry
 if __name__ == '__main__':
-    newBoard = ch.Board()
-    game = Main(newBoard)
-    game.startGame()
+    chess_game = ChessGame()
+    chess_game.run()
