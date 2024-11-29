@@ -255,6 +255,6 @@ This project is protected under the [MIT-LICENSE](https://mit-license.org/) Lice
 
 ## 🙌 Acknowledgments
 
-- Credits go out to (Scier)[https://www.youtube.com/@scierknave] for his chess AI tutorial where I let myself get some inspiration: (video)[https://youtu.be/4qwFwdCcgac]
+- Credits go out to [Scier](https://www.youtube.com/@scierknave) for his chess AI tutorial where I let myself get some inspiration: [video](https://youtu.be/4qwFwdCcgac)
 
 ---
